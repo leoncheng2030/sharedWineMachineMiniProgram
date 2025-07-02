@@ -1,0 +1,2 @@
+# sharedWineMachineMiniProgram
+自助售酒机小程序端
