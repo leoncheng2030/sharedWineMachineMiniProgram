@@ -111,6 +111,7 @@
             <up-icon name="setting" size="60px" color="#666" label="我的设备" label-pos="bottom" label-size="25rpx" label-color="#333"></up-icon>
           </view>
         </u-grid-item>
+        <!-- 支付测试入口已移除 -->
       </u-grid>
     </view>
 
@@ -350,6 +351,11 @@ const goToMyDevices = () => {
     }
   })
 }
+
+/**
+ * 跳转到支付测试页面
+ */
+// 支付测试函数已移除
 
 /**
  * 登录成功回调

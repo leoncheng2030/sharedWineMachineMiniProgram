@@ -111,6 +111,7 @@
                 "navigationBarBackgroundColor": "#FFFFFF"
             }
         },
+
         {
             "path": "pages/device/my-devices",
             "style": {
@@ -156,17 +157,8 @@
                 "navigationBarTextStyle": "black",
                 "navigationBarBackgroundColor": "#FFFFFF"
             }
-        },
-        {
-            "path": "pages/test/order-detail-test",
-            "style": {
-                "navigationBarTitleText": "订单接口测试",
-                "backgroundColorTop": "#FFFFFF",
-                "navigationBarTextStyle": "black",
-                "navigationBarBackgroundColor": "#FFFFFF"
-            }
-        }
-    ],
+                  }
+      ],
     "subPackages": [
         {
             "root": "bundle/pages",

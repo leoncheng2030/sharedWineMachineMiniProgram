@@ -17,7 +17,7 @@
                 ></up-swiper>
             </view>
 
-            <!-- 四宫格导航 -->
+            <!-- 导航栏 -->
             <view class="grid-nav">
                 <view class="nav-grid">
                     <view class="nav-item" @click="handleScanCode">
@@ -351,16 +351,40 @@ const handleMoreClick = () => {
 const handleScanCode = () => {
     uni.scanCode({
         success: (res) => {
-            console.log('扫码结果:', res);
-            // 跳转到设备详情页面，传递二维码内容
+            console.log('✅ 扫码成功:', res);
+            
+            // 从扫码结果中获取设备ID
+            const deviceId = res.result;
+            
+            if (!deviceId) {
+                uni.showToast({
+                    title: '二维码内容无效',
+                    icon: 'none'
+                });
+                return;
+            }
+            
+            console.log('🎯 解析的设备ID:', deviceId);
+            
+            // 跳转到设备详情页面
             uni.navigateTo({
-                url: `/pages/device/detail?qrCode=${encodeURIComponent(res.result)}`
+                url: `/pages/device/detail?deviceId=${encodeURIComponent(deviceId)}`,
+                success: () => {
+                    console.log('✅ 成功跳转到设备详情页面');
+                },
+                fail: (error) => {
+                    console.error('❌ 跳转设备详情页面失败:', error);
+                    uni.showToast({
+                        title: '页面跳转失败',
+                        icon: 'none'
+                    });
+                }
             });
         },
         fail: (error) => {
-            console.error('扫码失败:', error);
+            console.error('❌ 扫码失败:', error);
             uni.showToast({
-                title: '扫码失败',
+                title: '扫码失败，请重试',
                 icon: 'none'
             });
         }
@@ -543,6 +567,10 @@ onMounted(() => {
     background: linear-gradient(135deg, #007aff, #5ac8fa);
 }
 
+.test-icon {
+    background: linear-gradient(135deg, #ff4757, #ff6b7a);
+}
+
 .device-icon {
     background: linear-gradient(135deg, #52c41a, #73d13d);
 }
@@ -552,7 +580,7 @@ onMounted(() => {
 }
 
 .wallet-icon {
-    background: linear-gradient(135deg, #ff4757, #ff6b7a);
+    background: linear-gradient(135deg, #9c27b0, #ba68c8);
 }
 
 .nav-text {

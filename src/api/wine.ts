@@ -14,6 +14,8 @@ export interface WineProduct {
     categoryName?: string;
     /** 品牌 */
     brand?: string;
+    /** 供应商名称 */
+    supplierName?: string;
     /** 酒精度数 */
     alcoholContent?: number;
     /** 净含量(ml) */
@@ -42,6 +44,8 @@ export interface WineProductDetail extends WineProduct {
     origin?: string;
     /** 生产厂家 */
     manufacturer?: string;
+    /** 供应商客户端ID */
+    supplierId?: string;
     /** 成本价 */
     costPrice?: number;
     /** 酒品描述 */

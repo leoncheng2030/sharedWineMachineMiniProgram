@@ -115,14 +115,14 @@ class PaymentApi {
    * 创建微信支付订单
    */
   createWechatPayOrder(param: WechatPayCreateParam): Promise<WechatPayCreateResult> {
-    return request('/payment/wechat/create', param, 'POST')
+    return request('/miniprogram/payment/wechat/create', param, 'POST')
   }
 
   /**
    * 查询支付订单状态
    */
   queryPaymentOrder(param: PaymentQueryParam): Promise<PaymentQueryResult> {
-    return request('/payment/wechat/query', param, 'POST')
+    return request('/miniprogram/payment/wechat/query', param, 'POST')
   }
 
   /**
@@ -136,21 +136,21 @@ class PaymentApi {
    * 申请退款
    */
   refundOrder(param: RefundParam): Promise<RefundResult> {
-    return request('/payment/wechat/refund', param, 'POST')
+    return request('/miniprogram/payment/wechat/refund', param, 'POST')
   }
 
   /**
    * 查询退款状态
    */
   queryRefund(refundId: string): Promise<RefundResult> {
-    return request('/payment/wechat/refund/query', { refundId }, 'GET')
+    return request('/miniprogram/payment/wechat/refund/query', { refundId }, 'GET')
   }
 
   /**
    * 关闭支付订单
    */
   closeOrder(outTradeNo: string): Promise<boolean> {
-    return request('/payment/wechat/close', { outTradeNo }, 'POST')
+    return request('/miniprogram/payment/wechat/close', { outTradeNo }, 'POST')
   }
 
   /**

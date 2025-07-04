@@ -95,6 +95,8 @@
       <view class="settings-section" v-if="isDevelopment">
         <view class="section-title">开发者选项</view>
         <view class="settings-list">
+          <!-- 支付测试入口已移除 -->
+          
           <view class="settings-item danger" @click="handleResetData">
             <view class="item-left">
               <u-icon name="trash" size="20" color="#ff4757"></u-icon>
@@ -169,6 +171,8 @@ const goToPage = (url: string) => {
     }
   })
 }
+
+// 支付测试函数已移除
 
 /**
  * 退出登录

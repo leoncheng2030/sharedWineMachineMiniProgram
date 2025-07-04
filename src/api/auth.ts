@@ -70,6 +70,10 @@ export interface UserInfo {
     level?: any;
     userStatus: string;
     enabled: boolean;
+    wechatOpenid?: string;
+    wechatUnionid?: string;
+    wechatNickname?: string;
+    wechatAvatarUrl?: string;
     [key: string]: any;
 }
 

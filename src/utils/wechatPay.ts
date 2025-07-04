@@ -3,7 +3,7 @@
  * @author wqs
  * @date 2025/01/30
  */
-import { paymentApi, PaymentType, WechatPayCreateParam } from '@/api/payment'
+import { paymentApi, PaymentType, WechatPayCreateParam, WechatPayCreateResult } from '@/api/payment'
 import { WX_PAY_CONFIG } from '@/config'
 import { useAuthStore } from '@/store/modules/auth'
 
@@ -54,7 +54,7 @@ export class WechatPayUtil {
       }
 
       // 2. 获取用户openid
-      const openid = authStore.userInfo?.openid
+      const openid = authStore.userInfo?.wechatOpenid
       if (!openid) {
         uni.showToast({
           title: '获取用户信息失败',
@@ -85,19 +85,69 @@ export class WechatPayUtil {
       
       uni.hideLoading()
 
+      // 检查数据结构 - 处理可能的嵌套结构
+      let payData = payResult
+      
+      // 如果payResult有data字段，说明响应拦截器没有正确处理
+      if (payResult && typeof payResult === 'object' && 'data' in payResult) {
+        payData = (payResult as any).data
+      }
+      
+      // 验证支付参数 - 检查所有必需的字段
+      const requiredFields: (keyof WechatPayCreateResult)[] = ['timeStamp', 'nonceStr', 'packageValue', 'signType', 'paySign']
+      const missingFields = requiredFields.filter(field => !payData[field])
+      
+      if (missingFields.length > 0) {
+        uni.showToast({
+          title: '支付参数错误',
+          icon: 'error'
+        })
+        return {
+          success: false,
+          message: `支付参数缺失: ${missingFields.join(', ')}`,
+          data: payData
+        }
+      }
+
+      // 确保所有参数都是字符串类型
+      const paymentParams = {
+        timeStamp: String(payData.timeStamp || ''),
+        nonceStr: String(payData.nonceStr || ''),
+        package: String(payData.packageValue || ''), // 注意：这里要使用 package 而不是 packageValue
+        signType: String(payData.signType || ''),
+        paySign: String(payData.paySign || '')
+      }
+
+      // 再次验证转换后的参数
+      const emptyFields = Object.entries(paymentParams)
+        .filter(([key, value]) => !value || value === 'undefined' || value === 'null')
+        .map(([key]) => key)
+
+      if (emptyFields.length > 0) {
+        uni.showToast({
+          title: '支付参数错误',
+          icon: 'error'
+        })
+        return {
+          success: false,
+          message: `支付参数为空: ${emptyFields.join(', ')}`,
+          data: { original: payData, converted: paymentParams }
+        }
+      }
+
       // 4. 调用微信支付
+      console.log('🚀 发起微信支付，订单号:', payParam.outTradeNo)
+      
       return new Promise((resolve) => {
-        uni.requestPayment({
-          provider: 'wxpay',
-          orderInfo: {
-            timeStamp: payResult.timeStamp!,
-            nonceStr: payResult.nonceStr!,
-            package: payResult.packageValue!,
-            signType: payResult.signType!,
-            paySign: payResult.paySign!
-          },
+        // 调用微信小程序支付API
+        // @ts-ignore
+        wx.requestPayment({
+          timeStamp: paymentParams.timeStamp,
+          nonceStr: paymentParams.nonceStr,
+          package: paymentParams.package,
+          signType: paymentParams.signType as any,
+          paySign: paymentParams.paySign,
           success: (res) => {
-            console.log('微信支付成功', res)
             uni.showToast({
               title: '支付成功',
               icon: 'success'
@@ -109,11 +159,22 @@ export class WechatPayUtil {
             })
           },
           fail: (err) => {
-            console.error('微信支付失败', err)
             let message = '支付失败'
             
-            if (err.errMsg?.includes('cancel')) {
-              message = '支付已取消'
+            // 根据错误类型提供更友好的提示
+            if (err.errMsg) {
+              if (err.errMsg.includes('cancel')) {
+                message = '支付已取消'
+              } else if (err.errMsg.includes('parameter error')) {
+                message = '支付参数错误'
+              } else if (err.errMsg.includes('network')) {
+                message = '网络错误，请重试'
+              } else if (err.errMsg.includes('timeout')) {
+                message = '支付超时，请重试'
+              }
+            }
+            
+            if (message === '支付已取消') {
               uni.showToast({
                 title: message,
                 icon: 'none'
@@ -136,7 +197,6 @@ export class WechatPayUtil {
 
     } catch (error) {
       uni.hideLoading()
-      console.error('创建支付订单失败', error)
       
       const message = error instanceof Error ? error.message : '创建支付订单失败'
       uni.showToast({

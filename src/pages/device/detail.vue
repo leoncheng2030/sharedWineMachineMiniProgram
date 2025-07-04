@@ -1,6 +1,28 @@
 <template>
   <view class="device-detail-page">
-    <!-- 酒品信息 - 主角，放在最前面并增强视觉效果 -->
+    
+    <!-- 页面加载状态 -->
+    <view v-if="pageLoading" class="loading-container">
+      <up-loading-icon mode="circle" size="40"></up-loading-icon>
+      <text class="loading-text">正在加载设备信息...</text>
+    </view>
+    
+    <!-- 登录提示界面 -->
+    <view v-else-if="loginRequired" class="login-required-container">
+      <up-icon name="lock" size="80" color="#ccc"></up-icon>
+      <text class="login-title">需要登录</text>
+      <text class="login-desc">查看设备详情需要先登录您的账户</text>
+      <up-button 
+        type="primary" 
+        @click="showAuthModal = true"
+        custom-style="margin-top: 40rpx; width: 300rpx;">
+        立即登录
+      </up-button>
+    </view>
+    
+        <!-- 设备详情内容 -->
+    <view v-else>
+      <!-- 酒品信息 - 主角，放在最前面并增强视觉效果 -->
     <view class="wine-hero-card">
       <view class="wine-hero-content">
         <image :src="wineInfo.image" class="wine-hero-image" mode="aspectFill" />
@@ -13,27 +35,33 @@
             <view class="wine-status-row">
               <text class="stock-text">库存：{{ wineInfo.stock }}ml</text>
             </view>
-            <text class="wine-price">¥{{ wineInfo.price }}/ml</text>
+            <text class="wine-price">¥{{ wineInfo.unitPrice }}/ml</text>
           </view>
         </view>
       </view>
     </view>
 
     <!-- 容量规格选择 - 紧跟酒品信息 -->
-    <view v-if="wineInfo.capacities && wineInfo.capacities.length > 0" class="capacity-selection-card">
+    <view class="capacity-selection-card">
       <view class="card-header">
         <up-icon name="grid-fill" size="20" color="#007aff"></up-icon>
         <text class="card-title">选择容量</text>
       </view>
 
-      <view class="capacity-grid">
+      <view v-if="wineInfo.capacities && wineInfo.capacities.length > 0" class="capacity-grid">
         <view v-for="capacity in wineInfo.capacities" :key="capacity.id" class="capacity-item"
           :class="{ 'selected': selectedCapacity?.id === capacity.id }" @click="selectCapacity(capacity)">
           <view class="capacity-size">{{ capacity.size }}</view>
         </view>
       </view>
 
-      <view class="capacity-tips">
+      <view v-else class="no-capacity-available">
+        <up-icon name="info-circle" size="40" color="#ccc"></up-icon>
+        <text class="no-capacity-text">暂无可选容量</text>
+        <text class="no-capacity-desc">请联系门店管理员配置容量规格</text>
+      </view>
+
+      <view v-if="wineInfo.capacities && wineInfo.capacities.length > 0" class="capacity-tips">
         <text class="tips-text">💡 选择合适的容量，现打现喝更新鲜</text>
       </view>
     </view>
@@ -99,15 +127,20 @@
       <view class="capacity-info-row">
         <text class="capacity-text">{{ selectedCapacity.size }} · {{ selectedCapacity.description }}</text>
       </view>
+      <view class="price-calculation-row">
+        <text class="price-calculation">¥{{ wineInfo.unitPrice }}/ml × {{ parseCapacitySize(selectedCapacity.size) }}ml</text>
+      </view>
       <view class="price-info-row">
-        <text class="price-label">价格：</text>
+        <text class="price-label">总价：</text>
         <text class="total-price">¥{{ totalAmount }}</text>
       </view>
     </view>
 
     <view v-else class="purchase-info">
       <view class="no-selection-row">
-        <text class="no-selection-text">请选择容量</text>
+        <text class="no-selection-text">
+          {{ (!wineInfo.capacities || wineInfo.capacities.length === 0) ? '暂无可选容量' : '请选择容量' }}
+        </text>
       </view>
     </view>
 
@@ -129,19 +162,18 @@
     @confirm="confirmPay" @cancel="() => showPayConfirm = false" @close="() => showPayConfirm = false"></up-modal>
 
   <!-- 登录授权弹窗 -->
-  <AuthModal :show="showAuthModal" @loginSuccess="handleLoginSuccess" />
+  <AuthModal :show="showAuthModal" @loginSuccess="onLoginSuccess" />
+  </view>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { onLoad, onShow } from '@dcloudio/uni-app'
-import { useAuth } from '@/hooks/useAuth'
+import {computed, onMounted, ref} from 'vue'
+import {onLoad, onShow} from '@dcloudio/uni-app'
+import {useAuth} from '@/hooks/useAuth'
 import AuthModal from '@/components/authModal/index.vue'
-import DeviceApi, { type DeviceStockInfo } from '@/api/device'
-import { StoreApi } from '@/api/store'
-import { WineApi } from '@/api/wine'
-import { OrderApi, type OrderCreateParam } from '@/api/order'
-import { checkDeviceOnline } from '@/utils/ble'
+import DeviceApi from '@/api/device'
+import {OrderApi, type OrderCreateParam} from '@/api/order'
+import {checkDeviceOnline} from '@/utils/ble'
 
 // 类型定义 - 匹配API返回的数据结构
 interface DeviceInfo {
@@ -182,7 +214,7 @@ interface ApiDeviceData {
     type: string
     alcoholContent: number
     image: string
-    price: number
+    unitPrice: number
     stock: number
     capacities?: Array<{
       id: string
@@ -215,7 +247,7 @@ interface Wine {
   type: string
   alcoholContent: number
   image: string
-  price: number
+  unitPrice: number
   stock: number
   capacities: Capacity[]
 }
@@ -238,6 +270,10 @@ const deviceInfo = ref<DeviceInfo>({
   deviceCode: ''
 })
 
+// 页面加载状态
+const pageLoading = ref(true)
+const loginRequired = ref(false)
+
 const storeInfo = ref<StoreInfo>({
   name: '',
   hours: '',
@@ -252,7 +288,7 @@ const wineInfo = ref<Wine>({
   type: '',
   alcoholContent: 0,
   image: '',
-  price: 0,
+  unitPrice: 0,
   stock: 0,
   capacities: []
 })
@@ -276,26 +312,38 @@ const idVerifyConfig = ref<IdVerifyConfig>({
 const isIdVerified = ref(true) // 用户实名认证状态，默认已认证
 const hasShownIdVerifyModal = ref(false) // 是否已显示过认证弹窗
 
-
-
 // 认证相关
 const { isLoggedIn, requireAuth, showAuthModal, handleLoginSuccess } = useAuth()
 
-// 计算属性
-const totalAmount = computed(() => {
-  if (!selectedCapacity.value) {
-    return 0
+// 存储设备ID，用于登录成功后加载
+const pendingDeviceId = ref<string>('')
+
+// 总价 - 响应式数据
+const totalAmount = ref(0)
+
+// 当选择容量变化时，重新计算总价
+const updateTotalAmount = () => {
+  if (!selectedCapacity.value || !wineInfo.value) {
+    totalAmount.value = 0
+    return
   }
-  return selectedCapacity.value.price
-})
+  
+  // 解析容量数值（如 "100ml" -> 100）
+  const capacityInMl = parseCapacitySize(selectedCapacity.value.size)
+  const unitPrice = wineInfo.value.unitPrice || 0
+  
+  // 计算总价：单价(元/ml) × 容量(ml) = 总价(元)
+  totalAmount.value = Number((unitPrice * capacityInMl).toFixed(2))
+}
 
 const canPurchase = computed(() => {
-  // 基本条件检查：需要业务状态为在线且蓝牙连接正常
-  const basicConditions = wineInfo.value &&
-    selectedCapacity.value &&
-    deviceInfo.value.status === 'online' &&
-    (deviceInfo.value.connectionStatus === 'ONLINE' || deviceInfo.value.connectionStatus === undefined)
-  return basicConditions
+  // 基本条件检查：需要有酒品信息、有可选容量、已选择容量、业务状态为在线且蓝牙连接正常
+  return wineInfo.value &&
+      wineInfo.value.capacities &&
+      wineInfo.value.capacities.length > 0 &&
+      selectedCapacity.value &&
+      deviceInfo.value.status === 'online' &&
+      (deviceInfo.value.connectionStatus === 'ONLINE' || deviceInfo.value.connectionStatus === undefined)
 })
 
 const payConfirmContent = computed(() => {
@@ -310,9 +358,11 @@ const idVerifyContent = computed(() => {
 // 页面加载
 onLoad((options) => {
   // 获取设备ID - 支持从扫码或列表页面跳转
-  const deviceId = options?.deviceId || options?.id
+  const deviceId = options?.deviceId || options?.id || options?.qrCode
+  
   if (deviceId) {
-    loadDeviceDetail(deviceId)
+    // 先检查登录状态，再加载设备详情
+    checkAuthAndLoadDevice(deviceId)
   } else {
     uni.showToast({
       title: '设备ID缺失',
@@ -370,6 +420,34 @@ const cancelIdVerify = () => {
   showIdVerifyModal.value = false
 }
 
+// 处理登录成功
+const onLoginSuccess = async () => {
+  console.log('登录成功回调，检查是否有待处理的设备ID:', pendingDeviceId.value)
+  
+  // 调用原有的登录成功处理
+  handleLoginSuccess()
+  
+  // 如果有待处理的设备ID，立即加载设备详情
+  if (pendingDeviceId.value) {
+    console.log('登录成功，加载待处理的设备详情:', pendingDeviceId.value)
+    
+    try {
+      loginRequired.value = false
+      pageLoading.value = true
+      await loadDeviceDetail(pendingDeviceId.value)
+      pendingDeviceId.value = '' // 清除待处理的设备ID
+      pageLoading.value = false
+    } catch (error) {
+      console.error('登录成功后加载设备详情失败:', error)
+      pageLoading.value = false
+      uni.showToast({
+        title: '加载设备信息失败',
+        icon: 'none'
+      })
+    }
+  }
+}
+
 
 
 
@@ -386,10 +464,12 @@ const checkBluetoothDeviceOnline = async (deviceId: string, deviceData: ApiDevic
     // 使用简化的蓝牙检查函数
     const isOnline = await checkDeviceOnline(numericDeviceId)
 
-    // 更新连接状态而不是业务状态
+    // 同时更新连接状态和业务状态
     if (isOnline) {
       deviceData.connectionStatus = 'ONLINE'
       deviceData.checkResult = '刚刚检测为蓝牙在线'
+      // 蓝牙在线时，设备业务状态也设为在线
+      deviceData.status = 'online'
       
       // 调用后端API更新连接状态
       await DeviceApi.updateDeviceConnectionStatus(deviceData.id, 'ONLINE', '刚刚检测为蓝牙在线')
@@ -403,6 +483,8 @@ const checkBluetoothDeviceOnline = async (deviceId: string, deviceData: ApiDevic
     } else {
       deviceData.connectionStatus = 'OFFLINE'
       deviceData.checkResult = '刚刚检测为蓝牙离线'
+      // 蓝牙离线时，设备业务状态也设为离线
+      deviceData.status = 'offline'
       
       // 调用后端API更新连接状态
       await DeviceApi.updateDeviceConnectionStatus(deviceData.id, 'OFFLINE', '刚刚检测为蓝牙离线')
@@ -413,6 +495,8 @@ const checkBluetoothDeviceOnline = async (deviceId: string, deviceData: ApiDevic
     // 异常情况下，设置为未知状态
     deviceData.connectionStatus = 'UNKNOWN'
     deviceData.checkResult = '检测失败，请重试'
+    // 检测失败时，设备业务状态设为离线（安全起见）
+    deviceData.status = 'offline'
     
     try {
       await DeviceApi.updateDeviceConnectionStatus(deviceData.id, 'UNKNOWN', '检测失败，请重试')
@@ -424,6 +508,67 @@ const checkBluetoothDeviceOnline = async (deviceId: string, deviceData: ApiDevic
 
 
 
+// 检查认证状态并加载设备详情
+const checkAuthAndLoadDevice = async (deviceId: string) => {
+  // 检查用户登录状态
+  if (!isLoggedIn.value) {
+    console.log('用户未登录，显示登录提示')
+    
+    // 设置登录必需状态和停止页面加载
+    loginRequired.value = true
+    pageLoading.value = false
+    pendingDeviceId.value = deviceId
+    
+    // 显示登录提示
+    uni.showModal({
+      title: '需要登录',
+      content: '查看设备详情需要先登录，是否立即登录？',
+      showCancel: true,
+      confirmText: '立即登录',
+      cancelText: '取消',
+      success: async (res) => {
+        if (res.confirm) {
+          try {
+            // 尝试登录
+            await requireAuth()
+            
+            // 如果requireAuth没有显示弹窗，手动显示
+            if (!isLoggedIn.value && !showAuthModal.value) {
+              showAuthModal.value = true
+            }
+            
+            // 登录成功后加载设备详情
+            if (isLoggedIn.value) {
+              console.log('登录成功，开始加载设备详情')
+              loginRequired.value = false
+              pageLoading.value = true
+              await loadDeviceDetail(deviceId)
+              pendingDeviceId.value = '' // 清除待处理的设备ID
+              pageLoading.value = false
+            }
+          } catch (error) {
+            console.error('登录失败:', error)
+            uni.showToast({
+              title: '登录失败，请重试',
+              icon: 'none'
+            })
+          }
+        } else {
+          // 用户取消登录，返回上一页
+          uni.navigateBack()
+        }
+      }
+    })
+    return
+  }
+  
+  // 用户已登录，直接加载设备详情
+  console.log('用户已登录，直接加载设备详情')
+  pageLoading.value = true
+  await loadDeviceDetail(deviceId)
+  pageLoading.value = false
+}
+
 // 加载设备详情
 const loadDeviceDetail = async (deviceId: string) => {
   try {
@@ -431,7 +576,7 @@ const loadDeviceDetail = async (deviceId: string) => {
     const deviceData = await DeviceApi.getDeviceDetail(deviceId) as unknown as ApiDeviceData
 
     // 检查蓝牙设备是否在线
-    await checkBluetoothDeviceOnline(deviceData.deviceCode, deviceData)
+    // await checkBluetoothDeviceOnline(deviceData.deviceCode, deviceData)
 
     // 设置设备信息
     deviceInfo.value = {
@@ -463,7 +608,8 @@ const loadDeviceDetail = async (deviceId: string) => {
 
     // 直接使用API返回的酒品信息
     if (deviceData.wineInfo) {
-      const unitPrice = deviceData.wineInfo.price || 0.28; // 单价：元/ml，默认0.28元/ml
+      // 注意：deviceData.wineInfo.price 是某个特定容量的总价格，不是单价
+      // 我们需要根据后端返回的容量配置来计算单价，或者使用默认单价
       
       // 查询真实库存
       let realStock = 0;
@@ -482,20 +628,14 @@ const loadDeviceDetail = async (deviceId: string) => {
           id: cap.id,
           size: cap.size, // 后台已经格式化为 "100ml" 这样的格式
           description: getCapacityDescription(cap.size), // 根据容量生成描述
-          price: Number((unitPrice * parseCapacitySize(cap.size)).toFixed(2)), // 单价 × 容量 = 总价
+          price: 0, // 价格将由前端实时计算，不存储固定值
           stock: realStock, // 使用真实库存
           sortCode: cap.sortCode || 0 // 排序码
                  })).sort((a: Capacity, b: Capacity) => (a.sortCode || 0) - (b.sortCode || 0)); // 按排序码排序
       }
       
-      // 如果后台没有返回容量信息，使用默认容量
-      if (capacities.length === 0) {
-        capacities = [
-          { id: 'default_100', size: '100ml', description: '小杯装', price: Number((unitPrice * 100).toFixed(2)), stock: realStock, sortCode: 1 },
-          { id: 'default_250', size: '250ml', description: '中杯装', price: Number((unitPrice * 250).toFixed(2)), stock: realStock, sortCode: 2 },
-          { id: 'default_500', size: '500ml', description: '大杯装', price: Number((unitPrice * 500).toFixed(2)), stock: realStock, sortCode: 3 }
-        ];
-      }
+      // 如果后台没有返回容量信息，不使用默认容量，保持空数组
+      // 这样前端会显示"暂无可选容量"的提示
       
 
       
@@ -506,9 +646,14 @@ const loadDeviceDetail = async (deviceId: string) => {
         type: deviceData.wineInfo.type || '浓香型白酒',
         alcoholContent: deviceData.wineInfo.alcoholContent || 52,
         image: deviceData.wineInfo.image || '/static/images/bulk_wine.jpg',
-        price: unitPrice,
+        unitPrice: deviceData.wineInfo.unitPrice, // 显示单价
         stock: realStock, // 使用真实库存
         capacities: capacities
+      }
+      
+      // 加载完酒品信息后，如果已选择容量，更新总价
+      if (selectedCapacity.value) {
+        updateTotalAmount()
       }
     } else {
       // 没有绑定酒品时的默认信息
@@ -519,7 +664,7 @@ const loadDeviceDetail = async (deviceId: string) => {
         type: '散酒',
         alcoholContent: 0,
         image: '/static/images/bulk_wine.jpg',
-        price: 0,
+        unitPrice: 0,
         stock: 0,
         capacities: []
       }
@@ -548,6 +693,8 @@ const loadDeviceDetail = async (deviceId: string) => {
 // 选择容量
 const selectCapacity = (capacity: Capacity) => {
   selectedCapacity.value = capacity
+  // 选择容量后立即更新总价
+  updateTotalAmount()
 }
 
 const getStatusText = (status: string) => {
@@ -567,6 +714,10 @@ const getSelectedInfo = () => {
 
 const getPayButtonText = () => {
   if (!wineInfo.value) return '酒品信息加载中'
+  
+  // 检查是否有可选容量
+  if (!wineInfo.value.capacities || wineInfo.value.capacities.length === 0) return '暂无可选容量'
+  
   if (!selectedCapacity.value) return '请选择容量'
   
   // 检查业务状态
@@ -617,6 +768,8 @@ const handlePurchase = async () => {
         if (isOnline) {
           deviceInfo.value.connectionStatus = 'ONLINE'
           deviceInfo.value.checkResult = '刚刚检测为蓝牙在线'
+          // 蓝牙在线时，设备业务状态也设为在线
+          deviceInfo.value.status = 'online'
           
           // 更新后端状态
           await DeviceApi.updateDeviceConnectionStatus(deviceInfo.value.id, 'ONLINE', '刚刚检测为蓝牙在线')
@@ -635,6 +788,8 @@ const handlePurchase = async () => {
         } else {
           deviceInfo.value.connectionStatus = 'OFFLINE'
           deviceInfo.value.checkResult = '刚刚检测为蓝牙离线'
+          // 蓝牙离线时，设备业务状态也设为离线
+          deviceInfo.value.status = 'offline'
           
           // 更新后端状态
           await DeviceApi.updateDeviceConnectionStatus(deviceInfo.value.id, 'OFFLINE', '刚刚检测为蓝牙离线')
@@ -668,6 +823,8 @@ const handlePurchase = async () => {
       
       deviceInfo.value.connectionStatus = 'UNKNOWN'
       deviceInfo.value.checkResult = '检测失败，请重试'
+      // 检测失败时，设备业务状态设为离线（安全起见）
+      deviceInfo.value.status = 'offline'
       
       // 尝试更新后端状态
       try {
@@ -774,7 +931,7 @@ const confirmPay = async () => {
       deviceId: deviceInfo.value.id,
       wineId: wineInfo.value.id,
       amount: parseCapacitySize(selectedCapacity.value.size), // 将容量规格转换为出酒量(ml)
-      unitPrice: calculateUnitPrice(selectedCapacity.value.price, parseCapacitySize(selectedCapacity.value.size)),
+      unitPrice: wineInfo.value.unitPrice,
       remark: `购买${wineInfo.value.name} - ${selectedCapacity.value.description}`,
       latitude: undefined, // 如果需要位置信息，可以在这里获取
       longitude: undefined
@@ -881,6 +1038,8 @@ const handleBluetoothCheck = async () => {
       deviceInfo.value.connectionStatus = 'ONLINE'
       deviceInfo.value.checkResult = '刚刚检测为蓝牙在线'
       deviceInfo.value.lastCheckTime = new Date().toISOString()
+      // 蓝牙在线时，设备业务状态也设为在线
+      deviceInfo.value.status = 'online'
       
       // 更新后端状态
       await DeviceApi.updateDeviceConnectionStatus(deviceInfo.value.id, 'ONLINE', '刚刚检测为蓝牙在线')
@@ -895,6 +1054,8 @@ const handleBluetoothCheck = async () => {
       deviceInfo.value.connectionStatus = 'OFFLINE'
       deviceInfo.value.checkResult = '刚刚检测为蓝牙离线'
       deviceInfo.value.lastCheckTime = new Date().toISOString()
+      // 蓝牙离线时，设备业务状态也设为离线
+      deviceInfo.value.status = 'offline'
       
       // 更新后端状态
       await DeviceApi.updateDeviceConnectionStatus(deviceInfo.value.id, 'OFFLINE', '刚刚检测为蓝牙离线')
@@ -922,6 +1083,8 @@ const handleBluetoothCheck = async () => {
     deviceInfo.value.connectionStatus = 'UNKNOWN'
     deviceInfo.value.checkResult = '检测失败，请重试'
     deviceInfo.value.lastCheckTime = new Date().toISOString()
+    // 检测失败时，设备业务状态设为离线（安全起见）
+    deviceInfo.value.status = 'offline'
     
     // 尝试更新后端状态
     try {
@@ -1176,6 +1339,28 @@ const getBluetoothCheckText = () => {
   }
 }
 
+.no-capacity-available {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60rpx 32rpx;
+  text-align: center;
+  
+  .no-capacity-text {
+    font-size: 28rpx;
+    color: #666;
+    font-weight: 500;
+    margin: 16rpx 0 8rpx;
+  }
+  
+  .no-capacity-desc {
+    font-size: 24rpx;
+    color: #999;
+    line-height: 1.4;
+  }
+}
+
 .device-info-card,
 .store-info-card {
   background: white;
@@ -1413,6 +1598,16 @@ const getBluetoothCheckText = () => {
         color: #333;
         line-height: 1.3;
         font-weight: 500;
+      }
+    }
+
+    .price-calculation-row {
+      margin-bottom: 8rpx;
+
+      .price-calculation {
+        font-size: 24rpx;
+        color: #666;
+        line-height: 1.3;
       }
     }
 
