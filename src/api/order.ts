@@ -135,6 +135,8 @@ export interface OrderDetail {
   updateTime?: string
   /** 扩展信息 */
   extJson?: string
+  /** 设备控制指令 */
+  controlCmd?: string
 }
 
 /**

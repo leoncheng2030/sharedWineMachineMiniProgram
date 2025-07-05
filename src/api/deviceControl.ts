@@ -7,7 +7,7 @@ export interface DeviceControlParam {
   /** 订单编号 */
   chargeId: string
   /** 设备ID */
-  deviceId: string
+  deviceCode: string
   /** 用户ID */
   userId: string
   /** 通电分钟数 */

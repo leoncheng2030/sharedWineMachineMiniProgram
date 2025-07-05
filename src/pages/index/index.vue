@@ -584,7 +584,7 @@ onMounted(() => {
 }
 
 .nav-text {
-    font-size: 24rpx;
+    font-size: 28rpx;
     color: #666;
 }
 

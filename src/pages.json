@@ -94,6 +94,15 @@
             }
         },
         {
+            "path": "pages/order/payment-success",
+            "style": {
+                "navigationBarTitleText": "支付成功",
+                "backgroundColorTop": "#FFFFFF",
+                "navigationBarTextStyle": "black",
+                "navigationBarBackgroundColor": "#FFFFFF"
+            }
+        },
+        {
             "path": "pages/device/list",
             "style": {
                 "navigationBarTitleText": "设备列表",

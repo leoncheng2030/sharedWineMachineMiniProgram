@@ -44,8 +44,84 @@
  * ```
  */
 
+// Loading 管理器
+class LoadingManager {
+  private static instance: LoadingManager;
+  private _isLoading: boolean = false;
+  private _loadingTimer: any = null;
+  private _currentTitle: string = '';
+
+  static getInstance(): LoadingManager {
+    if (!LoadingManager.instance) {
+      LoadingManager.instance = new LoadingManager();
+    }
+    return LoadingManager.instance;
+  }
+
+  show(title: string = '加载中'): void {
+    if (this._isLoading && this._currentTitle === title) {
+      return; // 相同标题的loading已经在显示，不重复显示
+    }
+
+    this.hide(); // 先隐藏之前的loading
+
+    try {
+      uni.showLoading({
+        title,
+        mask: true,
+        complete: () => {
+          this._isLoading = true;
+          this._currentTitle = title;
+          console.log(`[BLE-Loading] 显示: ${title}`);
+          
+          // 设置超时自动隐藏
+          if (this._loadingTimer) {
+            clearTimeout(this._loadingTimer);
+          }
+          this._loadingTimer = setTimeout(() => {
+            console.warn(`[BLE-Loading] 超时自动隐藏: ${title}`);
+            this.hide();
+          }, 15000);
+        }
+      });
+    } catch (error) {
+      console.warn('[BLE-Loading] 显示失败:', error);
+      this._isLoading = false;
+      this._currentTitle = '';
+    }
+  }
+
+  hide(): void {
+    if (this._isLoading) {
+      try {
+        uni.hideLoading();
+        console.log(`[BLE-Loading] 隐藏: ${this._currentTitle}`);
+      } catch (error) {
+        console.warn('[BLE-Loading] 隐藏失败:', error);
+      }
+    }
+    
+    this._isLoading = false;
+    this._currentTitle = '';
+    
+    if (this._loadingTimer) {
+      clearTimeout(this._loadingTimer);
+      this._loadingTimer = null;
+    }
+  }
+
+  isLoading(): boolean {
+    return this._isLoading;
+  }
+
+  getCurrentTitle(): string {
+    return this._currentTitle;
+  }
+}
+
 // 全局变量
 let _loading = false;
+const loadingManager = LoadingManager.getInstance();
 
 // 类型定义
 interface ApiOptions {
@@ -85,6 +161,39 @@ interface BluetoothDevice {
   serviceData?: any;
 }
 
+interface DetailedDeviceStatus {
+  isOnline: boolean;
+  deviceId: number;
+  deviceInfo?: ChargeDeviceInfo;
+  signalStrength?: number;
+  bluetoothDeviceId?: string;
+  status?: {
+    code: number;
+    text: string;
+  };
+  remainInfo?: {
+    time: number;
+    timeDisplay: string;
+    quantity: number;
+  };
+  orderInfo?: {
+    orderId: number;
+    isActive: boolean;
+  };
+  batteryInfo?: {
+    usedQuantity: number;
+    remainQuantity: number;
+  };
+  connectionInfo?: {
+    rssi: number;
+    signalLevel: 'excellent' | 'good' | 'fair' | 'poor';
+  };
+  errorInfo?: {
+    hasError: boolean;
+    errorMessage?: string;
+  };
+}
+
 /**
  * 封装uni API为Promise
  */
@@ -101,24 +210,14 @@ function $uni(api: string, opts: ApiOptions = {}): Promise<ApiResponse> {
  * 显示加载提示
  */
 function showLoading(title: string = '加载中'): void {
-  if (!_loading) {
-    uni.showLoading({
-      title,
-      complete: () => setTimeout(() => {
-        _loading && uni.hideLoading();
-        _loading = false;
-      }, 8000) // 优化超时时间到8秒
-    });
-  }
-  _loading = true;
+  loadingManager.show(title);
 }
 
 /**
  * 隐藏加载提示
  */
 function hideLoading(): void {
-  _loading && uni.hideLoading();
-  _loading = false;
+  loadingManager.hide();
 }
 
 /**
@@ -317,6 +416,214 @@ function checkBluetooth(): Promise<boolean> {
 }
 
 /**
+ * 设备状态码映射
+ */
+const DEVICE_STATUS_MAP: Record<number, string> = {
+  0: '通电停止',
+  1: '启动中',
+  2: '拔插断电',
+  3: '过载断电',
+  4: '短路断电',
+  5: '充满断电',
+  6: '主动断电',
+  10: '电池电压低',
+  30: '管理员停用',
+  31: '库存用完',
+  50: '淹水故障'
+};
+
+/**
+ * 根据信号强度评估信号等级
+ */
+function getSignalLevel(rssi: number): 'excellent' | 'good' | 'fair' | 'poor' {
+  if (rssi >= -40) return 'excellent';
+  if (rssi >= -55) return 'good';
+  if (rssi >= -70) return 'fair';
+  return 'poor';
+}
+
+/**
+ * 检查设备详细状态（新增方法）
+ * @param deviceId 设备ID
+ * @returns 详细的设备状态信息
+ */
+async function checkDetailedDeviceStatus(deviceId: number): Promise<DetailedDeviceStatus> {
+  try {
+    console.log(`[BLE] 🚀 开始检测设备 ${deviceId} 的详细状态`);
+
+    // #ifdef MP-WEIXIN
+    const hasPermission = await checkBluetooth().catch(_ => false);
+    if (!hasPermission) {
+      console.log('[BLE] ❌ 蓝牙权限检查失败');
+      return {
+        isOnline: false,
+        deviceId,
+        errorInfo: {
+          hasError: true,
+          errorMessage: '蓝牙权限未授权'
+        }
+      };
+    }
+    // #endif
+
+    return new Promise((resolve) => {
+      showLoading('正在检测设备状态...');
+      let myDevice: BluetoothDevice | null = null;
+      let deviceInfo: ChargeDeviceInfo | null = null;
+      let tryCnt = 0;
+      let isFound = false;
+      let searchTimer: any = null;
+
+      // 设置搜索超时（优化到10秒，给详细检测更多时间）
+      const searchTimeout = setTimeout(() => {
+        console.log('[BLE] ⏰ 搜索超时，停止搜索');
+        cleanup();
+        resolve({
+          isOnline: false,
+          deviceId,
+          errorInfo: {
+            hasError: true,
+            errorMessage: '搜索超时，设备可能离线'
+          }
+        });
+      }, 10000);
+
+      const cleanup = () => {
+        if (searchTimer) {
+          clearTimeout(searchTimer);
+          searchTimer = null;
+        }
+        if (searchTimeout) {
+          clearTimeout(searchTimeout);
+        }
+        uni.stopBluetoothDevicesDiscovery();
+        uni.offBluetoothDeviceFound();
+        hideLoading();
+      };
+
+      uni.openBluetoothAdapter({
+        success: () => {
+          console.log('[BLE] ✅ 蓝牙适配器初始化成功');
+          uni.startBluetoothDevicesDiscovery({
+            allowDuplicatesKey: true,
+            interval: 50,
+            complete: () => {
+              console.log('[BLE] 🔍 开始搜索设备');
+
+              uni.onBluetoothDeviceFound((res: any) => {
+                tryCnt++;
+                if (tryCnt % 20 === 0) {
+                  showLoading(`检测设备状态(${Math.floor(tryCnt / 20)})...`);
+                }
+
+                const devices: BluetoothDevice[] = res.devices;
+                for (let i = 0; i < devices.length; i++) {
+                  if (devices[i].advertisData) {
+                    try {
+                      const view = new Uint8Array(devices[i].advertisData as ArrayBuffer);
+                      const checkDevice = isChargeDevice(view);
+                      if (checkDevice && Number(checkDevice.ID) === Number(deviceId)) {
+                        myDevice = devices[i];
+                        deviceInfo = checkDevice;
+                        isFound = true;
+                        console.log(`[BLE] 🎯 找到目标设备 ${deviceId}，搜索次数: ${tryCnt}`);
+
+                        // 构建详细状态信息
+                        const detailedStatus: DetailedDeviceStatus = {
+                          isOnline: true,
+                          deviceId,
+                          deviceInfo: checkDevice,
+                          signalStrength: devices[i].RSSI,
+                          bluetoothDeviceId: devices[i].deviceId,
+                          status: checkDevice.STATUS !== undefined ? {
+                            code: checkDevice.STATUS,
+                            text: DEVICE_STATUS_MAP[checkDevice.STATUS] || `未知状态(${checkDevice.STATUS})`
+                          } : undefined,
+                          remainInfo: {
+                            time: checkDevice.REMAINTIME || 0,
+                            timeDisplay: checkDevice.REMAINSHOW || '无',
+                            quantity: checkDevice.REMAINQUANTITY || 0
+                          },
+                          orderInfo: checkDevice.ORDERID !== undefined ? {
+                            orderId: checkDevice.ORDERID,
+                            isActive: checkDevice.ORDERID > 0
+                          } : undefined,
+                          batteryInfo: {
+                            usedQuantity: checkDevice.USEQUANTITY || 0,
+                            remainQuantity: checkDevice.REMAINQUANTITY || 0
+                          },
+                          connectionInfo: devices[i].RSSI !== undefined ? {
+                            rssi: devices[i].RSSI!,
+                            signalLevel: getSignalLevel(devices[i].RSSI!)
+                          } : undefined,
+                          errorInfo: {
+                            hasError: false
+                          }
+                        };
+
+                        // 立即停止搜索并返回结果
+                        cleanup();
+                        resolve(detailedStatus);
+                        return;
+                      }
+                    } catch (error) {
+                      console.warn('[BLE] 设备数据解析错误，跳过:', error);
+                    }
+                  }
+                }
+
+                // 如果搜索次数达到限制且未找到设备，返回失败
+                if (tryCnt >= 200 && !isFound) {
+                  console.log('[BLE] ❌ 搜索次数达到限制，未找到设备');
+                  cleanup();
+                  resolve({
+                    isOnline: false,
+                    deviceId,
+                    errorInfo: {
+                      hasError: true,
+                      errorMessage: '设备离线或不在附近'
+                    }
+                  });
+                }
+              });
+            }
+          });
+        },
+        fail: (error: any) => {
+          console.error('[BLE] ❌ 蓝牙适配器初始化失败:', error);
+          cleanup();
+
+          let message = '蓝牙启动失败，请开启重试';
+          if (error.errCode === 10001) {
+            message = '蓝牙未开启，请在设置中开启蓝牙后重试';
+          }
+
+          resolve({
+            isOnline: false,
+            deviceId,
+            errorInfo: {
+              hasError: true,
+              errorMessage: message
+            }
+          });
+        }
+      });
+    });
+  } catch (error) {
+    console.error('[BLE] ❌ 检查设备详细状态失败:', error);
+    hideLoading();
+    return {
+      isOnline: false,
+      deviceId,
+      errorInfo: {
+        hasError: true,
+        errorMessage: '检测失败，请重试'
+      }
+    };
+  }
+}
+
+/**
  * 检查设备是否在线（优化版本）
  */
 async function checkDeviceOnline(deviceId: number): Promise<boolean> {
@@ -439,7 +746,13 @@ async function checkDeviceOnline(deviceId: number): Promise<boolean> {
 async function writeChargeData(deviceId: number, CMD: string): Promise<void> {
   try {
     console.log(`[BLE] 🚀 开始写入充电数据到设备 ${deviceId}`);
-
+    console.log('CMD', CMD)
+    
+    // 验证CMD指令格式
+    if (!CMD || CMD.length < 20) {
+      throw new Error('控制指令格式错误，请重新获取指令');
+    }
+    
     // #ifdef MP-WEIXIN
     const hasPermission = await checkBluetooth().catch(_ => false);
     if (!hasPermission) { return; }
@@ -506,9 +819,9 @@ async function writeChargeData(deviceId: number, CMD: string): Promise<void> {
                           const startTime = Date.now();
 
                           // 优化服务发现等待时间（从10秒优化到5秒）
-                          while (nowTime - startTime < 5000) {
+                          while (nowTime - startTime < 10000) {
                             nowTime = Date.now();
-                            if (nowTime - diffTime < 200) { continue; } // 优化重试间隔到200ms
+                            if (nowTime - diffTime < 10000) { continue; } // 优化重试间隔到200ms
 
                             const res = await $uni('getBLEDeviceServices', { deviceId: myDevice!.deviceId });
                             if (res.status === 'fail') {
@@ -541,26 +854,34 @@ async function writeChargeData(deviceId: number, CMD: string): Promise<void> {
                               for (let i = 0; i < dataArr.length; i++) {
                                 const data = dataArr[i];
                                 console.log('发送数据: ', data);
-
+                                
                                 uni.writeBLECharacteristicValue({
                                   deviceId: myDevice!.deviceId,
                                   serviceId,
                                   characteristicId: wcharacteristicId,
                                   value: data as any,
-                                  success: () => successNum++,
+                                  success: () => {
+                                    successNum++;
+                                    console.log(`[BLE] 数据包 ${i+1}/${dataArr.length} 发送成功`);
+                                  },
                                   fail: (res: any) => {
                                     failNum++;
+                                    console.error(`[BLE] 数据包 ${i+1} 发送失败:`, res);
                                     failWrite(myDevice, res.errCode, res.errMsg);
                                   },
                                   complete: () => {
                                     if (successNum === dataArr.length) {
-                                      successWrite(myDevice);
+                                      console.log(`[BLE] 所有数据包发送完成，成功: ${successNum}, 失败: ${failNum}`);
+                                      // 延时验证设备状态
+                                      setTimeout(() => {
+                                        verifyDeviceStatus(myDevice, deviceId);
+                                      }, 2000);
                                     }
                                   }
-                                });
+                                })
 
                                 if (failNum > 0) { break; }
-                                sleep(50); // 优化发送间隔到50ms
+                                sleep(100); // 优化发送间隔到50ms
                               }
                             }
                           });
@@ -608,12 +929,125 @@ async function writeChargeData(deviceId: number, CMD: string): Promise<void> {
 }
 
 /**
+ * 验证设备状态
+ */
+async function verifyDeviceStatus(myDevice: BluetoothDevice | null, deviceId: number): Promise<void> {
+  try {
+    console.log(`[BLE] 🔍 验证设备 ${deviceId} 状态...`);
+    
+    // 重新检查设备状态
+    const isOnline = await checkDeviceOnline(deviceId);
+    if (!isOnline) {
+      console.log('[BLE] ⚠️ 设备已离线，可能已启动');
+      successWrite(myDevice);
+      return;
+    }
+    
+    // 设备仍在线，检查是否有状态变化
+    showLoading('验证设备状态...');
+    
+    uni.openBluetoothAdapter({
+      success: () => {
+        uni.startBluetoothDevicesDiscovery({
+          allowDuplicatesKey: true,
+          interval: 100,
+          complete: () => {
+            let checkCount = 0;
+            const maxChecks = 5;
+            
+            const deviceFoundHandler = (res: any) => {
+              checkCount++;
+              const devices: BluetoothDevice[] = res.devices;
+              
+              for (let i = 0; i < devices.length; i++) {
+                if (devices[i].advertisData) {
+                  try {
+                    const view = new Uint8Array(devices[i].advertisData as ArrayBuffer);
+                    const checkDevice = isChargeDevice(view);
+                    
+                    if (checkDevice && Number(checkDevice.ID) === Number(deviceId)) {
+                      console.log(`[BLE] 设备状态检查 ${checkCount}/${maxChecks}:`, checkDevice);
+                      
+                      // 检查设备是否在工作状态
+                      if (checkDevice.STATUS && checkDevice.STATUS > 0) {
+                        console.log('[BLE] ✅ 设备已启动，状态正常');
+                        cleanup();
+                        successWrite(myDevice);
+                        return;
+                      }
+                    }
+                  } catch (error) {
+                    console.warn('[BLE] 设备状态解析错误:', error);
+                  }
+                }
+              }
+              
+              if (checkCount >= maxChecks) {
+                console.log('[BLE] ⚠️ 设备状态检查完成，未检测到启动状态');
+                cleanup();
+                // 显示可能的问题提示
+                uni.showModal({
+                  title: '设备状态提醒',
+                  content: '指令已发送，但设备可能未启动。\n可能原因：\n1. 设备忙碌或故障\n2. 控制指令过期\n3. 设备需要手动重启\n\n请检查设备状态或联系客服。',
+                  showCancel: true,
+                  cancelText: '我知道了',
+                  confirmText: '重试控制',
+                  success: (res) => {
+                    if (res.confirm) {
+                      // 重试控制逻辑可以在上层处理
+                      console.log('[BLE] 用户选择重试控制');
+                    }
+                  }
+                });
+                
+                if (myDevice) {
+                  uni.closeBLEConnection({
+                    deviceId: myDevice.deviceId,
+                    complete: _ => null
+                  });
+                }
+                uni.closeBluetoothAdapter({ complete: _ => null });
+              }
+            };
+            
+            const cleanup = () => {
+              uni.stopBluetoothDevicesDiscovery();
+              uni.offBluetoothDeviceFound(deviceFoundHandler);
+              hideLoading();
+            };
+            
+            uni.onBluetoothDeviceFound(deviceFoundHandler);
+            
+            // 设置超时
+            setTimeout(() => {
+              if (checkCount < maxChecks) {
+                console.log('[BLE] ⏰ 设备状态检查超时');
+                cleanup();
+                successWrite(myDevice);
+              }
+            }, 8000);
+          }
+        });
+      },
+      fail: () => {
+        console.log('[BLE] ❌ 设备状态验证失败');
+        successWrite(myDevice);
+      }
+    });
+    
+  } catch (error) {
+    console.error('[BLE] ❌ 设备状态验证异常:', error);
+    successWrite(myDevice);
+  }
+}
+
+/**
  * 写入成功回调
  */
 function successWrite(myDevice: BluetoothDevice | null): void {
   hideLoading();
   uni.showModal({
-    content: '通电启动成功',
+    content: '指令发送成功，请稍候观察设备是否启动',
     showCancel: false,
     confirmText: '我知道了'
   });
@@ -746,6 +1180,67 @@ function postUpdateKey(data: any, successCallback?: (data: any) => void): Promis
   return postData(url, data, successCallback, failCallback);
 }
 
+/**
+ * 调试日志功能
+ */
+function debugLog(message: string, data?: any): void {
+  const timestamp = new Date().toLocaleTimeString();
+  console.log(`[BLE-DEBUG ${timestamp}] ${message}`, data || '');
+  
+  // 可选：将日志保存到本地存储用于调试
+  try {
+    const logs = uni.getStorageSync('ble_debug_logs') || [];
+    logs.push({
+      timestamp,
+      message,
+      data: data ? JSON.stringify(data) : null
+    });
+    
+    // 只保留最近100条日志
+    if (logs.length > 100) {
+      logs.splice(0, logs.length - 100);
+    }
+    
+    uni.setStorageSync('ble_debug_logs', logs);
+  } catch (error) {
+    console.warn('[BLE] 保存调试日志失败:', error);
+  }
+}
+
+/**
+ * 获取调试日志
+ */
+function getDebugLogs(): any[] {
+  try {
+    return uni.getStorageSync('ble_debug_logs') || [];
+  } catch (error) {
+    console.warn('[BLE] 获取调试日志失败:', error);
+    return [];
+  }
+}
+
+/**
+ * 清除调试日志
+ */
+function clearDebugLogs(): void {
+  try {
+    uni.removeStorageSync('ble_debug_logs');
+    console.log('[BLE] 调试日志已清除');
+  } catch (error) {
+    console.warn('[BLE] 清除调试日志失败:', error);
+  }
+}
+
+/**
+ * 获取 Loading 状态
+ */
+function getLoadingStatus(): { isLoading: boolean; currentTitle: string } {
+  return {
+    isLoading: loadingManager.isLoading(),
+    currentTitle: loadingManager.getCurrentTitle()
+  };
+}
+
 // 导出所有功能
 export {
   // 网络请求函数
@@ -756,12 +1251,21 @@ export {
   // 设备检查函数
   isChargeDevice,
   checkDeviceOnline,
+  checkDetailedDeviceStatus,
   writeChargeData,
   checkBluetooth,
+  verifyDeviceStatus,
+
+  // 调试功能
+  debugLog,
+  getDebugLogs,
+  clearDebugLogs,
+  getLoadingStatus,
 
   // 类型定义
   type ChargeDeviceInfo,
   type BluetoothDevice,
+  type DetailedDeviceStatus,
   type ApiOptions,
   type ApiResponse
 };
@@ -773,5 +1277,11 @@ export default {
   isChargeDevice,
   writeChargeData,
   checkBluetooth,
-  checkDeviceOnline
+  checkDeviceOnline,
+  checkDetailedDeviceStatus,
+  verifyDeviceStatus,
+  debugLog,
+  getDebugLogs,
+  clearDebugLogs,
+  getLoadingStatus
 }; 
